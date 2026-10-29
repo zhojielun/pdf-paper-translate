@@ -68,12 +68,23 @@ python3 scripts/pdf_translate.py diagnose "xx.pdf"
 ### ② 导出待翻译块
 
 ```bash
+python3 scripts/pdf_translate.py extract "xx.pdf" --compact --out work/xx.compact.json
+```
+
+`--compact` 只导出**待翻译块**，按页分组，字段为 `key` / `size` / `bold` / `hint` / `text`，
+不含 bbox；公式、表带、图区和参考文献已过滤掉，体积约为完整清单的一半，适合直接读入翻译。
+需要坐标或排查分类时，再用完整版：
+
+```bash
 python3 scripts/pdf_translate.py extract "xx.pdf" --out work/xx.blocks.json
 ```
 
-清单里每块含 `key`（形如 `p<页>:b<块号>`）、页码、bbox、字号、是否加粗、一个粗分类提示
+完整清单里每块含 `key`（形如 `p<页>:b<块号>`）、页码、bbox、字号、是否加粗、一个粗分类提示
 （`body` / `heading` / `title` / `caption` / `formula` / `table` / `figure` / `reference`）以及
 去连字符后的原文，并附上 `fig_regions`、`table_bands` 等建议值。
+
+> 两种 `extract` 输出都只是清单，不能直接交给 `render`；仍需按 `SKILL.md` 编写
+> `translations.json`。
 
 ### ③ 翻译成 `translations.json`
 
@@ -84,11 +95,13 @@ python3 scripts/pdf_translate.py extract "xx.pdf" --out work/xx.blocks.json
 
 ```bash
 python3 scripts/pdf_translate.py render "xx.pdf" work/xx.translations.json \
-    --out "xx-zh.pdf" --fonts ./fonts --work ./build
+    --out "xx-zh.pdf" --fonts ./fonts --work ./build --quiet
 ```
 
-结束会打印验收报告：每页字体、残留 `et al` 数量、缺字方块与逐块填充率。**所有
-`!! 缺少译文`、`!! 溢出` 都要处理掉。**
+结束会打印验收报告。`--quiet` 会隐藏逐页计数、字体日志、`diagnose` 明细和约 430 行逐块填充率
+表，只保留 `!!` 问题行和 `问题页数`；日常渲染都建议加上，排查版面时再去掉。报告里的
+`et_al_pages: "auto"`（默认）会把保留表格/图内残留的 `et al.` 原位改成 `等人`，并自动跳过
+参考文献页。**所有 `!! 缺少译文`、`!! 溢出` 都要处理掉。**
 
 ### ⑤ 生成对照版
 
@@ -109,7 +122,7 @@ python3 scripts/make_side_by_side.py "xx.pdf" "xx-zh.pdf" --out "xx-dual.pdf"
   "layout": {
     "keep_ids": [], "no_indent": [], "widen": {}, "affil_ids": [],
     "table_bands": {}, "fig_regions": {}, "references_pages": [],
-    "references_heading_ids": [], "title_ids": []
+    "references_heading_ids": [], "title_ids": [], "et_al_pages": "auto"
   },
   "blocks":        { "p0:b0": "xx", "p0:b1": "xx" },
   "figure_labels": { "xx": "xx" },
@@ -126,8 +139,24 @@ python3 scripts/make_side_by_side.py "xx.pdf" "xx-zh.pdf" --out "xx-dual.pdf"
 - `affil_ids`：作者单位块（按行居中替换）。
 - `fig_regions` / `table_bands`：图区与表带（按 1-based 页码），决定哪些块当作图内标签、哪些当作表格保留。
 - `references_pages`：原样保留的参考文献页。
+- `et_al_pages`：保留表格/图内残留 `et al.` 原位改成 `等人` 的页码；默认 `"auto"` 表示除
+  `references_pages` 外的所有页，也可给 1-based 页号列表，`null` / `[]` 关闭。
 - `title_ids` / `references_heading_ids`：按标题渲染的块。
 - `params`：字号、行距等排版参数，一般用默认值。
+
+---
+
+## 省 token 的工作流
+
+翻译本身不贵，反复读大文件和反复渲染才贵。建议固定成「读一次 / 一次翻译 / 一次渲染 / 一次验收」：
+
+1. **读一次**：`extract --compact`，只读当前要翻的页组，不要反复读完整 `blocks.json`。
+2. **一次翻译**：按页组写成最终 key/value，最后合并一次；小修用定点编辑，不要整文件重写。
+3. **一次渲染**：始终 `render --quiet`，根据这一份报告改完所有 `!!` 再重渲。
+4. **一次验收**：最后抽 3–5 页渲染 PNG；不要每改一页就看一遍图。
+
+版面问题优先用 `layout` 配置（`keep_ids` / `table_bands` / `fig_regions` / `et_al_pages`）解决，
+少做「看一页 → 改脚本 → 全篇重渲」的补丁循环。
 
 ---
 

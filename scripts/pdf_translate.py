@@ -32,7 +32,8 @@ translations.json 结构
      "references_pages":[5],          # 原样保留的参考文献页
      "references_heading_ids":["p4:b0"],
      "title_ids":["p0:b0"],
-     "caption_regex":"^(Fig\\\\.|Table)\\\\s",
+     "et_al_pages":"auto",            # 保留表格/图内 et al.→等人（默认 auto；[] 关闭）
+     "caption_regex":"^(?:Fig\\\\.|Figure|Table)\\\\s*\\\\d+(?:[-–]\\\\d+)?[.:]\\\\s",
      "heading_regex":"^\\\\d+(?:\\\\.\\\\d+)*\\\\.?\\\\s+\\\\S",
      "abstract_headings":["ABSTRACT"],
      "keywords_prefixes":["Index Terms"]
@@ -66,6 +67,7 @@ import pymupdf
 LANG_PUNCT = "，。、；：“”‘’（）《》？！—…·×→≤≥∈∥⊙φψτℓ–★"
 MATH_CHARS = set("ˆ⊙ϕψτ∥∈×−≤≥∑ℓ√∂")
 CJK_RE = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]")
+ET_AL_RE = re.compile(r"et\s+al\.?", re.I)
 CJK_RANGE = "\u2e80-\u9fff\uf900-\ufaff\ufe30-\ufe4f\u3000-\u303f\uff00-\uffef"
 
 DEFAULTS = {
@@ -78,7 +80,8 @@ DEFAULTS = {
         "keep_ids": [], "no_indent": [], "widen": {}, "affil_ids": [],
         "table_bands": {}, "fig_regions": {}, "references_pages": [],
         "references_heading_ids": [], "title_ids": [],
-        "caption_regex": r"^(Fig\.|Table)\s",
+        "et_al_pages": "auto",
+        "caption_regex": r"^(?:Fig\.|Figure|Table)\s*\d+(?:[-–]\d+)?[.:]\s",
         "heading_regex": r"^\d+(?:\.\d+)*\.?\s+\S",
         "abstract_headings": ["ABSTRACT"],
         "keywords_prefixes": ["Index Terms"],
@@ -219,7 +222,7 @@ def _strip_locl(path: str) -> None:
     f.save(path)
 
 
-def build_subset_fonts(chars: set[str], paths: dict) -> None:
+def build_subset_fonts(chars: set[str], paths: dict, verbose: bool = True) -> None:
     """pyftsubset 子集化（CFF/OTF）→ otf2ttf 转 TTF。"""
     build = paths["build"]
     os.makedirs(build, exist_ok=True)
@@ -244,8 +247,9 @@ def build_subset_fonts(chars: set[str], paths: dict) -> None:
                  "--drop-tables+=DSIG"], check=True)
             subprocess.run(["otf2ttf", sub, "-o", ttf], check=True)
             _strip_locl(ttf)
-            print(f"  [font] {os.path.basename(otf)} → 子集 OTF "
-                  f"{os.path.getsize(sub) // 1024}KB → TTF {os.path.getsize(ttf) // 1024}KB")
+            if verbose:
+                print(f"  [font] {os.path.basename(otf)} → 子集 OTF "
+                      f"{os.path.getsize(sub) // 1024}KB → TTF {os.path.getsize(ttf) // 1024}KB")
 
 
 # ---------------------------------------------------------------- 诊断
@@ -258,7 +262,7 @@ class PageInfo:
     role: str = ""
 
 
-def diagnose(doc: pymupdf.Document) -> list[PageInfo]:
+def diagnose(doc: pymupdf.Document, verbose: bool = True) -> list[PageInfo]:
     infos = []
     for p in doc:
         t = p.get_text()
@@ -266,23 +270,24 @@ def diagnose(doc: pymupdf.Document) -> list[PageInfo]:
     for i in infos:
         i.role = "译文页" if i.ratio > 0.25 else "原文页"
 
-    print("=" * 78)
-    print("诊断：逐页 CJK 占比 / text block 数量 / 版面")
-    print("=" * 78)
-    for i, p in zip(infos, doc):
-        print(f"  p{i.no + 1}: {p.rect.width:.0f}×{p.rect.height:.0f}  "
-              f"CJK {i.ratio * 100:5.1f}%  blocks {i.nblocks:3d}  → {i.role}")
+    if verbose:
+        print("=" * 78)
+        print("诊断：逐页 CJK 占比 / text block 数量 / 版面")
+        print("=" * 78)
+        for i, p in zip(infos, doc):
+            print(f"  p{i.no + 1}: {p.rect.width:.0f}×{p.rect.height:.0f}  "
+                  f"CJK {i.ratio * 100:5.1f}%  blocks {i.nblocks:3d}  → {i.role}")
 
-    roles = [i.role for i in infos]
-    alternating = len(set(roles)) > 1 and all(
-        roles[i] != roles[i + 1] for i in range(len(roles) - 1))
-    print(f"  页序：{' / '.join(roles)}")
-    print(f"  「原文页 / 译文页」交替：{'是' if alternating else '否'}")
-    if alternating:
-        print("  → 双语交替：可用 align_blocks 做块级配对（本脚本按单语重建）")
-    else:
-        print("  → 单语原文：按 1:1 逐页翻译，块坐标直接取自原文页")
-    print()
+        roles = [i.role for i in infos]
+        alternating = len(set(roles)) > 1 and all(
+            roles[i] != roles[i + 1] for i in range(len(roles) - 1))
+        print(f"  页序：{' / '.join(roles)}")
+        print(f"  「原文页 / 译文页」交替：{'是' if alternating else '否'}")
+        if alternating:
+            print("  → 双语交替：可用 align_blocks 做块级配对（本脚本按单语重建）")
+        else:
+            print("  → 单语原文：按 1:1 逐页翻译，块坐标直接取自原文页")
+        print()
     return infos
 
 
@@ -374,6 +379,8 @@ def _fig_region(b, pno):
     reg = LAY("fig_regions").get(str(pno + 1))
     if not reg:
         return False
+    if len(reg) == 1:
+        return b["bbox"][3] <= reg[0]
     if len(reg) == 2:
         return b["bbox"][3] <= reg[1]
     x0, x1, y0, y1 = reg
@@ -394,7 +401,8 @@ def _find_formulas(blocks, col_left):
         has_math = any(c in MATH_CHARS for c in txt) or any(
             ("CMMI" in s["font"] or "CMSY" in s["font"])
             for l in b["lines"] for s in l["spans"])
-        if (b["bbox"][0] > col_left + 20 and h < 14
+        words = re.findall(r"\b[a-z]{3,}\b", txt)
+        if (b["bbox"][0] > col_left + 20 and h < 14 and len(words) <= 3
                 and (has_math or "=" in txt or len(txt) <= 3)):
             core.append(b)
     return core
@@ -428,10 +436,10 @@ def _hint(b, pno, blocks, core, col_left, regions=None):
         return "reference"
     if _in_table_band(b, pno):
         return "table"
-    if _is_formula(b, core):
-        return "formula"
     if re.match(LAY("caption_regex"), txt):
         return "caption"
+    if _is_formula(b, core):
+        return "formula"
     if f"p{pno}:b{b['number']}" in LAY("title_ids"):
         return "title"
     italic = ("Ital" in b["lines"][0]["spans"][0]["font"])
@@ -489,12 +497,12 @@ def classify_page(page: pymupdf.Page):
             items.append(Item(key, "affil", rect, txt, size, bold, [key],
                               extra={"lines": lines}))
             continue
-        if _is_formula(b, core_formula):
-            continue                            # 公式原样保留
         if re.match(LAY("caption_regex"), txt):
             items.append(Item(key, "caption", rect, txt, size, bold, [key],
                               base=b["lines"][0]["spans"][0]["origin"][1]))
             continue
+        if _is_formula(b, core_formula):
+            continue                            # 公式原样保留
         if key in LAY("title_ids"):
             items.append(Item(key, "title", rect, txt, size, bold, [key], align=1))
             continue
@@ -661,6 +669,87 @@ class Renderer:
 
 
 # ---------------------------------------------------------------- 字体路径
+def replace_et_al(doc, paths: dict, verbose: bool = True) -> int:
+    """Replace residual `et al.` outside references pages in place, preserving layout.
+
+    This catches citations left inside kept tables/figure regions (and any that escaped
+    clean_citations), so no per-page text-replace patch is needed.
+    """
+    setting = LAY("et_al_pages", "auto")
+    if setting in (None, False, "", []):
+        return 0
+    refs = {int(p) for p in LAY("references_pages", [])}
+    only = None if setting == "auto" else {int(p) for p in setting}
+    total = 0
+    for page in doc:
+        pno = page.number + 1
+        if pno in refs or (only is not None and pno not in only):
+            continue
+        spans = []
+        for b in page.get_text("dict").get("blocks", []):
+            if b.get("type") != 0:
+                continue
+            for line in b.get("lines", []):
+                for span in line.get("spans", []):
+                    spans.append((span, line.get("dir", (1, 0))))
+        rects = page.search_for("et al.")
+        if not rects:
+            rects = page.search_for("et al")
+        hits = []
+        for r in rects:
+            # The phrase may span multiple spans (e.g. italic "al."), so pick the
+            # span whose box overlaps the hit and is closest vertically.
+            best, best_dy = None, 1e9
+            for span, d in spans:
+                sb = pymupdf.Rect(span["bbox"])
+                if sb.x1 < r.x0 - 2 or sb.x0 > r.x1 + 2:
+                    continue
+                if sb.y1 < r.y0 - 3 or sb.y0 > r.y1 + 3:
+                    continue
+                dy = abs((sb.y0 + sb.y1) / 2 - (r.y0 + r.y1) / 2)
+                if dy < best_dy:
+                    best, best_dy = (span, d), dy
+            if best is None:
+                continue
+            hits.append((r, best[0], best[1]))
+        if not hits:
+            continue
+        uniq, seen = [], set()
+        for r, span, d in hits:
+            k = (round(r.x0, 1), round(r.y0, 1), round(r.x1, 1), round(r.y1, 1))
+            if k in seen:
+                continue
+            seen.add(k)
+            uniq.append((r, span, d))
+        for r, _, _ in uniq:
+            page.add_redact_annot(
+                pymupdf.Rect(r.x0, r.y0 - 1.0, r.x1 + 0.8, r.y1 + 1.0),
+                fill=None, cross_out=False)
+        page.apply_redactions(images=pymupdf.PDF_REDACT_IMAGE_NONE,
+                              graphics=pymupdf.PDF_REDACT_LINE_ART_NONE,
+                              text=pymupdf.PDF_REDACT_TEXT_REMOVE)
+        for r, span, d in uniq:
+            size = float(span["size"])
+            color = int(span.get("color", 0))
+            rgb = (((color >> 16) & 255) / 255,
+                   ((color >> 8) & 255) / 255, (color & 255) / 255)
+            bold = span_bold(span)
+            name = "zhB" if bold else "zhR"
+            ffile = paths["bold_ttf"] if bold else paths["reg_ttf"]
+            _, dy = d if len(d) == 2 else (1, 0)
+            if abs(dy) > 0.5:
+                page.insert_text((r.x0, r.y1), "等人", fontsize=size, fontname=name,
+                                 fontfile=ffile, color=rgb,
+                                 rotate=90 if dy < 0 else 270)
+            else:
+                page.insert_text((r.x0, span["origin"][1]), "等人", fontsize=size,
+                                 fontname=name, fontfile=ffile, color=rgb)
+            total += 1
+    if total and verbose:
+        print(f"  et al → 等人：{total} 处")
+    return total
+
+
 def font_paths(args) -> dict:
     fonts = args.fonts or os.path.join(os.path.dirname(os.path.abspath(args.src)), "fonts")
     build = args.work or os.path.join(os.path.dirname(os.path.abspath(args.out or args.src)),
@@ -694,6 +783,41 @@ def _merge_boxes(boxes, pad=6.0):
                 out.append(r)
         rects = out
     return [r for r in rects if r.width > 8 and r.height > 8]
+
+
+def _compact_payload(data: dict) -> dict:
+    """Remove coordinates and kept/translated-irrelevant blocks for low-token reading."""
+    layout = data["suggested_layout"]
+    refs = set(layout.get("references_pages", []))
+    title_ids = set(layout.get("title_ids", []))
+    pages: dict[str, list] = {}
+    for b in data["blocks"]:
+        p = b["page"]
+        if p in refs or b["hint"] == "formula":
+            continue
+        x0, y0, x1, y1 = b["bbox"]
+        cy = (y0 + y1) / 2
+        if any(y0_ <= cy <= y1_ for y0_, y1_ in
+               layout.get("table_bands", {}).get(str(p), [])):
+            continue
+        if any(r[0] <= (x0 + x1) / 2 <= r[2] and r[1] <= cy <= r[3]
+               for r in layout.get("fig_regions", {}).get(str(p), [])):
+            continue
+        pages.setdefault(str(p), []).append({
+            "key": b["key"], "size": b["size"], "bold": b["bold"],
+            "hint": "title" if b["key"] in title_ids else b["hint"],
+            "text": b["text"],
+        })
+    figs: dict[str, list] = {}
+    seen: set[tuple[str, int]] = set()
+    for c in data["figure_label_candidates"]:
+        k = (c["text"], c["page"])
+        if k in seen:
+            continue
+        seen.add(k)
+        figs.setdefault(str(c["page"]), []).append(
+            {"text": c["text"], "size": c["size"]})
+    return {"pages": pages, "figure_labels": figs, "suggested_layout": layout}
 
 
 def cmd_extract(args):
@@ -772,14 +896,20 @@ def cmd_extract(args):
 
     out = args.out or "blocks.json"
     os.makedirs(os.path.dirname(os.path.abspath(out)), exist_ok=True)
+    payload = _compact_payload(data) if args.compact else data
     with open(out, "w", encoding="utf-8") as fh:
-        json.dump(data, fh, ensure_ascii=False, indent=2)
-    n_body = sum(1 for b in data["blocks"] if b["hint"] == "body")
-    print(f"已写出 {out}: {len(data['blocks'])} 块（其中 body {n_body} 块待翻译），"
-          f"图内标签候选 {len(data['figure_label_candidates'])} 行")
-    print(f"  建议 layout: {json.dumps(data['suggested_layout'], ensure_ascii=False)[:400]}")
-    print("  → 请翻译 blocks 中 hint 为 body/heading/title/caption 的块，"
-          "并整理 figure_labels / affiliations / layout，生成 translations.json")
+        json.dump(payload, fh, ensure_ascii=False, indent=2)
+    if args.compact:
+        n = sum(len(v) for v in payload["pages"].values())
+        print(f"已写出 compact {out}: {n} 块待翻译 / "
+              f"{len(payload['figure_labels'])} 页图内标签，{os.path.getsize(out)} 字节")
+    else:
+        n_body = sum(1 for b in data["blocks"] if b["hint"] == "body")
+        print(f"已写出 {out}: {len(data['blocks'])} 块（其中 body {n_body} 块待翻译），"
+              f"图内标签候选 {len(data['figure_label_candidates'])} 行")
+        print(f"  建议 layout: {json.dumps(data['suggested_layout'], ensure_ascii=False)[:400]}")
+        print("  → 请翻译 blocks 中 hint 为 body/heading/title/caption 的块，"
+              "并整理 figure_labels / affiliations / layout，生成 translations.json")
 
 
 def _in_region(bbox, regions):
@@ -794,6 +924,7 @@ def _in_region(bbox, regions):
 # ---------------------------------------------------------------- render
 def cmd_render(args):
     global CFG, BLOCKS, FIG, AFFIL
+    quiet = getattr(args, "quiet", False)
     cfg, data = load_config(args.translations)
     CFG = cfg
     BLOCKS = data.get("blocks", {})
@@ -802,7 +933,7 @@ def cmd_render(args):
     paths = font_paths(args)
 
     doc = pymupdf.open(args.src)
-    diagnose(doc)
+    diagnose(doc, verbose=not quiet)
 
     chars = set(string.printable) | set(LANG_PUNCT) | set(cfg["params"].get("extra_chars", ""))
     for zh in BLOCKS.values():
@@ -810,13 +941,15 @@ def cmd_render(args):
     for zh in list(FIG.values()) + list(AFFIL.values()):
         chars |= set(zh)
     chars = {c for c in chars if c.isprintable()}
-    print("字体子集化：")
-    build_subset_fonts(chars, paths)
+    if not quiet:
+        print("字体子集化：")
+    build_subset_fonts(chars, paths, verbose=not quiet)
 
     rnd = Renderer(paths)
-    print("\n" + "=" * 78)
-    print("重建：redact 文字 → 同一 bbox 重排译文")
-    print("=" * 78)
+    if not quiet:
+        print("\n" + "=" * 78)
+        print("重建：redact 文字 → 同一 bbox 重排译文")
+        print("=" * 78)
     for page in doc:
         items, figs = classify_page(page)
         todo = []
@@ -875,37 +1008,46 @@ def cmd_render(args):
             f["zh"] = FIG[f["text"]]
             rnd.draw_fig(page, f)
 
-        print(f"  p{page.number + 1}: 正文 {counts['body']}，标题 {counts['heading']}，"
-              f"表/图题 {counts['caption']}，单位 {counts['affil']}，"
-              f"图内标签 {counts['fig']} 行")
+        if not quiet:
+            print(f"  p{page.number + 1}: 正文 {counts['body']}，标题 {counts['heading']}，"
+                  f"表/图题 {counts['caption']}，单位 {counts['affil']}，"
+                  f"图内标签 {counts['fig']} 行")
 
+    replace_et_al(doc, paths, verbose=not quiet)
     out = args.out or (os.path.splitext(args.src)[0] + "-zh.pdf")
     doc.save(out, garbage=4, deflate=True, clean=True)
-    print(f"\n已写出：{out}  ({os.path.getsize(out) / 1e6:.2f} MB)")
-    report(doc)
-    dump_stats(rnd)
+    print(f"已写出：{out}  ({os.path.getsize(out) / 1e6:.2f} MB)")
+    report(doc, quiet=quiet)
+    if not quiet:
+        dump_stats(rnd)
 
 
-def report(doc):
-    print("\n" + "=" * 78)
-    print("验收：字体 / 残留 et al / 缺字方块")
-    print("=" * 78)
-    bad = 0
+def report(doc, quiet: bool = False):
+    if not quiet:
+        print("\n" + "=" * 78)
+        print("验收：字体 / 残留 et al / 缺字方块")
+        print("=" * 78)
+    issues = set()
     refpages = set(LAY("references_pages"))
     for page in doc:
+        pno = page.number + 1
         txt = page.get_text()
-        n_etal = 0 if (page.number + 1) in refpages else len(re.findall(r"et\s+al", txt))
-        fonts = sorted({f[3] for f in page.get_fonts()})
-        flag = "" if n_etal == 0 else f"  <-- et al ×{n_etal}"
-        print(f"  p{page.number + 1}: blocks {len(page.get_text('blocks')):3d}  "
-              f"字体 {fonts}{flag}")
+        n_etal = 0 if pno in refpages else len(re.findall(r"et\s+al", txt))
+        if quiet:
+            if n_etal:
+                print(f"  !! p{pno}: 残留 et al ×{n_etal}")
+        else:
+            fonts = sorted({f[3] for f in page.get_fonts()})
+            flag = "" if n_etal == 0 else f"  <-- et al ×{n_etal}"
+            print(f"  p{pno}: blocks {len(page.get_text('blocks')):3d}  "
+                  f"字体 {fonts}{flag}")
         if n_etal:
-            bad += 1
+            issues.add(pno)
         for ch in ("\ufffd", "\u25a1"):
             if ch in txt:
-                print(f"      !! 缺字：{ch!r}")
-                bad += 1
-    print(f"  问题页数：{bad}")
+                print(f"      !! 缺字 p{pno}：{ch!r}")
+                issues.add(pno)
+    print(f"  问题页数：{len(issues)}")
 
 
 def dump_stats(rnd):
@@ -929,6 +1071,8 @@ def build_parser():
     e = sub.add_parser("extract", help="导出可翻译块清单")
     e.add_argument("src")
     e.add_argument("--out", default=None)
+    e.add_argument("--compact", action="store_true",
+                   help="只输出待翻译块（无 bbox/按页分组），显著减小文件")
     e.add_argument("--fonts", default=None)
     e.add_argument("--work", default=None)
 
@@ -936,6 +1080,8 @@ def build_parser():
     r.add_argument("src")
     r.add_argument("translations")
     r.add_argument("--out", default=None)
+    r.add_argument("--quiet", action="store_true",
+                   help="仅输出 !! 问题行和验收汇总，适合自动化/省上下文")
     r.add_argument("--fonts", default=None)
     r.add_argument("--work", default=None)
     return ap

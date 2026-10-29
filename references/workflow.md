@@ -20,6 +20,20 @@ Headings can't go through `insert_htmlbox` (it silently returns −1 in a tight 
 and centered, sized to `min(original_size, line_width / glyph_count)`. Tables, displayed
 formulas, and references are never touched.
 
+## Token-efficient runs
+
+The expensive part is context, not rendering:
+
+- **`extract --compact`** writes only translatable blocks, grouped by page, without bboxes. Read
+  that instead of the full manifest. The compact file is also *not* render input: it is a
+  manifest for translation, and `suggested_layout` still needs its `fig_regions` converted.
+- **`render --quiet`** keeps `!!` lines and `问题页数`, drops per-page counts, font logs,
+  `diagnose` details and the fill-ratio table. Use it by default.
+- **`et_al_pages: "auto"`** handles stray citations in kept tables/figures after rendering, so
+  you do not need a per-page patch pass.
+- Work in page groups and merge translations once. Re-render once after fixing every `!!` in the
+  current report; visual checking is a final step, not a loop.
+
 ## Deriving layout fields
 
 ### fig_regions
@@ -42,7 +56,17 @@ into `figure_labels`.
 `extract` proposes a band per `Table N.` caption: from just below the caption to the next
 caption (or the page bottom). A text block whose **center-y** falls in the band is kept as the
 original table. Verify visually — a ruled table is often a set of small text blocks plus vector
-rules; the band should cover the rule area, not the caption. Only the caption is translated.
+rules; the band should cover the rule area, not the caption. Only the caption is translated, so
+start the band below it; if the caption must be translated, either move the band or add the
+caption block to `blocks` explicitly.
+
+### et_al_pages
+
+After the main render, any `et al.` still visible must either be inside a translated block
+(cleaned by `clean_citations`) or inside a kept table/figure. `et_al_pages: "auto"` (default)
+searches each non-reference page for the phrase and rewrites it to `等人` at the original
+baseline, preserving the span's size, color and rotation. Use an explicit 1-based list to limit
+it, or `null` / `[]` to disable. Reference pages are always skipped.
 
 ### keep_ids
 
@@ -96,7 +120,8 @@ script.
 
 ## Verification checklist
 
-1. `render` prints `问题页数：0` — no leftover `et al` (except the references page) and no tofu.
+1. `render --quiet` prints `问题页数：0` — no leftover `et al` (except the references page) and no
+   tofu. Drop `--quiet` only if you need the fill-ratio table.
 2. No `!! 缺少译文` / `!! 溢出` / `!! 标题放不下` lines.
 3. Render 3–5 pages to PNG and eyeball: title size, headings not colliding with rules, figure
    labels legible and on-baseline, tables intact, captions above their table.
