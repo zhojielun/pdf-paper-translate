@@ -142,6 +142,12 @@ def block_text(block: dict) -> str:
     return norm_ws(out)
 
 
+def text_blocks(page: pymupdf.Page) -> list[dict]:
+    """只返回含 span 的文字块；pymupdf 偶尔会给出空 lines/bbox 的幽灵块。"""
+    return [b for b in page.get_text("dict")["blocks"]
+            if b["type"] == 0 and any(line.get("spans") for line in b.get("lines", []))]
+
+
 def span_bold(span: dict) -> bool:
     if span.get("flags", 0) & 16:
         return True
@@ -294,8 +300,8 @@ def diagnose(doc: pymupdf.Document, verbose: bool = True) -> list[PageInfo]:
 def align_blocks(pa: pymupdf.Page, pb: pymupdf.Page, verbose: bool = False):
     """原文页 ↔ 译文页的块级配对（块数相等按 (round(y0/k), x0) 顺序配对；
     否则单调 DP，代价 = |Δy0| + α|Δ高度|，跳过惩罚略大于行高）。"""
-    A = [b for b in pa.get_text("dict")["blocks"] if b["type"] == 0]
-    B = [b for b in pb.get_text("dict")["blocks"] if b["type"] == 0]
+    A = text_blocks(pa)
+    B = text_blocks(pb)
     pairs = []
     if len(A) == len(B):
         k = 2
@@ -455,8 +461,7 @@ def classify_page(page: pymupdf.Page):
     global _PW
     pno = page.number
     _PW = page.rect.width
-    all_blocks = page.get_text("dict")["blocks"]
-    blocks = [b for b in all_blocks if b["type"] == 0]
+    blocks = text_blocks(page)
     figs: list[dict] = []
     items: list[Item] = []
     col_left = min((b["bbox"][0] for b in blocks if b["bbox"][0] > 40), default=54.4)
@@ -832,7 +837,7 @@ def cmd_extract(args):
         global _PW
         _PW = p.rect.width
         ab = p.get_text("dict")["blocks"]
-        blocks = [b for b in ab if b["type"] == 0]
+        blocks = text_blocks(p)
         imgs = [b["bbox"] for b in ab if b["type"] == 1]
         data["pages"].append({"page": p.number + 1, "width": round(p.rect.width, 1),
                               "height": round(p.rect.height, 1),
