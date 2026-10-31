@@ -24,12 +24,53 @@
 
 ```
 pdf-paper-translate/
-├── SKILL.md                    # 技能说明与完整工作流
+├── .opencode/commands/
+│   └── translate-pdf.md        # /translate-pdf <pdf> 快捷命令（见「快速开始」）
 ├── scripts/
 │   ├── pdf_translate.py        # diagnose / extract / render 三个子命令
 │   └── make_side_by_side.py    # 生成左原文 / 右译文对照版
-└── references/
-    └── workflow.md             # 版面字段推导、字体原理、故障排查
+├── references/
+│   └── workflow.md             # 版面字段推导、字体原理、故障排查
+├── AGENTS.md                   # 给 agent 的工作约定与坑位清单
+└── SKILL.md                    # 技能说明与完整工作流
+```
+
+---
+
+## 快速开始
+
+在 OpenCode 里直接跑这一条：
+
+```
+/translate-pdf /content/xxx.pdf
+```
+
+它会读 `AGENTS.md`，按 `work/<pdf-stem>/` 走完 `diagnose` → `extract --compact` → 写
+`translations.json` → `render --quiet` → `make_side_by_side.py`，并把两个成品**放在源 PDF 同级目录**：
+
+```
+/content/xxx-zh.pdf     # 纯中文，与原文逐页 1:1
+/content/xxx-dual.pdf   # 左原文 / 右中文，宽度 (2W+G)
+```
+
+验收标准：`render` 输出里 `问题页数：0`，且没有任何 `!!` 行（`!! 缺少译文` / `!! 溢出` /
+`!! 标题放不下`）。
+
+不想用命令、手跑一遍的话，等价的最小步骤：
+
+```bash
+cd /content/pdf-paper-translate
+python3 -m pip install pymupdf fonttools otf2ttf          # 见下方「依赖」
+
+mkdir -p /content/fonts
+cp /tmp/opencode/fonts/NotoSerifCJKsc-*.otf /content/fonts/   # 本机现有字体副本
+
+python3 scripts/pdf_translate.py diagnose /content/xxx.pdf
+python3 scripts/pdf_translate.py extract /content/xxx.pdf --compact --out /content/work/xxx/compact.json
+# 读 compact.json，写 /content/work/xxx/translations.json（格式见下文）
+python3 scripts/pdf_translate.py render /content/xxx.pdf /content/work/xxx/translations.json \
+    --out /content/xxx-zh.pdf --fonts /content/fonts --work /content/work/xxx/build --quiet
+python3 scripts/make_side_by_side.py /content/xxx.pdf /content/xxx-zh.pdf --out /content/xxx-dual.pdf
 ```
 
 ---

@@ -14,4 +14,6 @@ Translate the PDF at `$ARGUMENTS` with this repo's existing pipeline. Do not run
 - Fonts live in `fonts/` next to the PDF or `--fonts DIR`; ask for the directory if missing.
 - Render with `--quiet`, fix every `!!` line, and require `问题页数：0`. Then render 3–5 pages to
   PNG and inspect them. Build the side-by-side PDF with `make_side_by_side.py`.
+- Write the deliverables next to the source PDF: `<pdf-dir>/<stem>-zh.pdf` and
+  `<pdf-dir>/<stem>-dual.pdf` (absolute `--out`), not only inside `work/`.
 - For a long paper, translate page-group by page-group into one `translations.json` and render once.

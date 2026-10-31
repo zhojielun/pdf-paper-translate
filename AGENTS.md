@@ -45,6 +45,9 @@ python3 scripts/pdf_translate.py render paper.pdf work/translations.json \
 python3 scripts/make_side_by_side.py paper.pdf paper-zh.pdf --out paper-dual.pdf
 ```
 
+- Deliver the outputs next to the source PDF, i.e. `<pdf-dir>/<stem>-zh.pdf` and
+  `<pdf-dir>/<stem>-dual.pdf`, not only under `work/`; tell the user the absolute paths when done.
+
 - `extract` output is a translation manifest, never `render` input. `--compact` emits
   `{pages: {"<page1based>": [{key,size,bold,hint,text}]}, figure_labels: {"<page>": [{text,size}]},
   suggested_layout}`; the full form adds bboxes and `figure_label_candidates`.
