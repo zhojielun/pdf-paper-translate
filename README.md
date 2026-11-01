@@ -24,15 +24,17 @@
 
 ```
 pdf-paper-translate/
+├── .commandcode/skills/pdf-paper-translate/
+│   └── SKILL.md                # → ../../../SKILL.md 符号链接，供 Command Code 发现技能
 ├── .opencode/commands/
-│   └── translate-pdf.md        # /translate-pdf <pdf> 快捷命令（见「快速开始」）
+│   └── translate-pdf.md        # /translate-pdf <pdf> 快捷命令（OpenCode 用）
 ├── scripts/
 │   ├── pdf_translate.py        # diagnose / extract / render 三个子命令
 │   └── make_side_by_side.py    # 生成左原文 / 右译文对照版
 ├── references/
 │   └── workflow.md             # 版面字段推导、字体原理、故障排查
 ├── AGENTS.md                   # 给 agent 的工作约定与坑位清单
-└── SKILL.md                    # 技能说明与完整工作流
+└── SKILL.md                    # 技能说明与完整工作流（唯一真源）
 ```
 
 ---
@@ -196,6 +198,14 @@ python3 scripts/make_side_by_side.py "xx.pdf" "xx-zh.pdf" --out "xx-dual.pdf"
 3. **一次渲染**：始终 `render --quiet`，根据这一份报告改完所有 `!!` 再重渲。
 4. **一次验收**：最后抽 3–5 页渲染 PNG；不要每改一页就看一遍图。
 
+`extract` 已经替你把两处最大的浪费去掉，直接复用它的 `suggested_layout`：
+
+- `references_pages` 会自动从 `References` 标题顺延到附录/下一节，多页文献**不再逐页重译**；
+  `--compact` 也不会列出这些页（一篇 100 页的综述里，文献常占一半篇幅）。
+- `keep_ids` 会自动收进**跨页重复的页眉/页脚/水印和页码**，`--compact` 同样不列出。
+  **记得把它一起拷进 `translations.json` 的 `layout.keep_ids`**，否则 `render` 会对这些块报
+  `!! 缺少译文`。
+
 版面问题优先用 `layout` 配置（`keep_ids` / `table_bands` / `fig_regions` / `et_al_pages`）解决，
 少做「看一页 → 改脚本 → 全篇重渲」的补丁循环。
 
@@ -203,15 +213,30 @@ python3 scripts/make_side_by_side.py "xx.pdf" "xx-zh.pdf" --out "xx-dual.pdf"
 
 ## 安装为 Skill
 
+Command Code **只会在固定目录里发现技能**：`.commandcode/skills/`、`.agents/skills/`（项目级）与
+`~/.commandcode/skills/`、`~/.agents/skills/`（用户级）。仓库根目录的 `SKILL.md` 不在扫描范围内，
+所以直接放在根目录、或只写一份 `.opencode/commands/*.md`，都不会出现在 `/` 菜单里。
+
+本仓库已经在项目级技能目录放了指向根 `SKILL.md` 的符号链接，因此在仓库内**开箱即用**：
+
 ```bash
-# 仅当前项目
-cp -r pdf-paper-translate .commandcode/skills/
-# 或：所有项目通用
-cp -r pdf-paper-translate ~/.commandcode/skills/
+cmd skills list          # 应能看到 Project › pdf-paper-translate
 ```
 
-安装后可用 `/pdf-paper-translate` 调用。默认目标是中文；若要翻译成其他语言，需同时调整脚本里的
-`LANG_PUNCT`（标点子集）与 `clean_citations()` 的替换词，详见 `references/workflow.md`。
+在 Command Code 里输入 `/pdf-paper-translate` 即可调用（前提是当前工作目录在本仓库内）。若要装到
+**所有项目**，把整份目录复制到用户级技能目录，或直接 `cmd skills add`：
+
+```bash
+cp -r /content/pdf-paper-translate ~/.commandcode/skills/
+# 或从 GitHub 安装：cmd skills add <owner>/pdf-paper-translate
+```
+
+> `.opencode/commands/translate-pdf.md` 是 OpenCode 的 `/translate-pdf`，Command Code 不读
+> `.opencode/`；若想在 Command Code 里也有一条 `/translate-pdf` 快捷命令，把同样内容放到
+> `.commandcode/commands/translate-pdf.md` 即可。
+
+默认目标是中文；若要翻译成其他语言，需同时调整脚本里的 `LANG_PUNCT`（标点子集）与
+`clean_citations()` 的替换词，详见 `references/workflow.md`。
 
 ---
 

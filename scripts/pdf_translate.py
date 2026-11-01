@@ -795,10 +795,11 @@ def _compact_payload(data: dict) -> dict:
     layout = data["suggested_layout"]
     refs = set(layout.get("references_pages", []))
     title_ids = set(layout.get("title_ids", []))
+    keep = set(layout.get("keep_ids", []))
     pages: dict[str, list] = {}
     for b in data["blocks"]:
         p = b["page"]
-        if p in refs or b["hint"] == "formula":
+        if p in refs or b["hint"] == "formula" or b["key"] in keep:
             continue
         x0, y0, x1, y1 = b["bbox"]
         cy = (y0 + y1) / 2
@@ -833,6 +834,7 @@ def cmd_extract(args):
                              "references_pages": [], "title_ids": []},
     }
     ref_re = re.compile(r"^\s*(\d+\.?\s*)?(References|参考文献)\s*$", re.I)
+    ref_head = None                    # (page, y-ratio) of the References heading
     for p in doc:
         global _PW
         _PW = p.rect.width
@@ -858,10 +860,8 @@ def cmd_extract(args):
             txt = block_text(b)
             if re.match(LAY("caption_regex"), txt) or re.match(r"^(Table|表)\s*\d", txt):
                 caps.append((b["bbox"][1], txt))
-            if ref_re.match(txt):
-                pg = p.number + 1
-                if pg not in data["suggested_layout"]["references_pages"]:
-                    data["suggested_layout"]["references_pages"].append(pg)
+            if ref_head is None and ref_re.match(txt):
+                ref_head = (p.number + 1, b["bbox"][1] / p.rect.height)
 
         for b in blocks:
             txt = block_text(b)
@@ -890,6 +890,36 @@ def cmd_extract(args):
                 band = [round(y + 10, 1), round(y1, 1)]
                 data["suggested_layout"]["table_bands"].setdefault(
                     str(p.number + 1), []).append(band)
+
+    # 参考文献页：标题在页首时含标题页，否则从下一页起；连续向后顺延，
+    # 直到出现附录/新章节标题为止（参考文献几乎总是连续的一段）。
+    if ref_head:
+        hp, ratio = ref_head
+        by_page = {}
+        for b in data["blocks"]:
+            by_page.setdefault(b["page"], []).append(b["text"])
+        stop_re = re.compile(r"^\s*(Appendix|附录|Supplementary)\b|^[A-Z]\.\s+\S")
+        refs = [hp] if ratio < 0.33 else []
+        for pg in range(hp + 1, len(doc) + 1):
+            if any(stop_re.match(t) for t in by_page.get(pg, [])):
+                break
+            refs.append(pg)
+        data["suggested_layout"]["references_pages"] = refs
+
+    # 跨页重复的样板块（页眉/页脚/水印）与页码：建议 keep_ids，compact 中不再列出
+    rep = {}
+    for b in data["blocks"]:
+        t = b["text"].strip()
+        if 0 < len(t) <= 120:
+            rep[t] = rep.get(t, 0) + 1
+    thresh = max(4, len(doc) // 3)
+    keep_ids = {b["key"] for b in data["blocks"]
+                if 0 < len(b["text"].strip()) <= 120
+                and rep[b["text"].strip()] >= thresh}
+    for b in data["blocks"]:
+        if b["text"].strip() == str(b["page"]):
+            keep_ids.add(b["key"])
+    data["suggested_layout"]["keep_ids"] = sorted(keep_ids)
 
     # 标题建议：首页宽度足够、字号最大的块（排除竖排水印等窄条）
     first = [b for b in data["blocks"]

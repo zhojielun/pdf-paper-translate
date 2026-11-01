@@ -1,7 +1,7 @@
 ---
 name: pdf-paper-translate
 description: Translate a PDF (academic paper or similar) into another language while preserving the original page layout — redact each translated text block and re-typeset the translation into the same bbox, keeping figures, math, tables and references intact. Also emits a left-original / right-translation side-by-side PDF. Use when the user asks to translate a PDF, make a bilingual/dual PDF, or "翻译这个 PDF / 对照版".
-argument-hint: "<src.pdf> [--fonts DIR] [--lang zh]"
+argument-hint: "<src.pdf> [--fonts DIR]"
 metadata:
   version: "1.0"
   pipeline: "pymupdf + fontTools/pyftsubset + otf2ttf"
@@ -56,7 +56,8 @@ translate 1:1 page by page, block coordinates come straight from the source.
 `key` / `size` / `bold` / `hint` / `text` and no bboxes. It is roughly half the size of the full
 manifest and is the recommended input to read: formulas, table bands, figure regions and
 references are already filtered out. It also carries `figure_labels` candidates and the proposed
-`suggested_layout`.
+`suggested_layout`. Blocks that repeat across pages (running headers/footers) and page numbers are
+filtered too and offered in `suggested_layout.keep_ids` — copy that into your `layout.keep_ids`.
 
 Use the full form when you need coordinates or are debugging classification:
 
@@ -186,12 +187,15 @@ each one is in `references/workflow.md`. Quick reference:
   left as the original table. Only the `Table N.` caption gets translated — start the band
   *below* the caption (or add the caption block to `blocks`) so it is not swallowed by the band.
 - `keep_ids` — block keys to leave untouched (author line, arXiv/watermark stamps, wide
-  display-formula blocks that pymupdf splits oddly).
+  display-formula blocks that pymupdf splits oddly). extract pre-fills this with cross-page repeated
+  blocks (running headers/footers) and page numbers.
 - `no_indent` — body blocks that continue a previous block/page (no first-line indent).
 - `widen` — `{"<key>": new_x1}` to widen a short single-line block whose column is empty to the
   right.
 - `affil_ids` — author-affiliation block keys; replaced line-by-line, horizontally centered.
-- `references_pages` — 1-based pages kept verbatim (the bibliography).
+- `references_pages` — 1-based pages kept verbatim (the bibliography). extract auto-extends it from
+  the `References` heading to the next `Appendix` / `A. …` / `Supplementary` heading; override it
+  when a paper interleaves body between bibliography pages.
 - `et_al_pages` — pages where residual `et al.` in kept tables/figures is rewritten in place to
   `等人`. Default `"auto"` = every page except `references_pages`; an explicit list of 1-based
   pages is also accepted, and `null`/`[]` disables it.

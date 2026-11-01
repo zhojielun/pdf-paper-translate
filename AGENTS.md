@@ -17,8 +17,7 @@
   That command can rewrite the tracked `scripts/__pycache__/*.pyc`; run
   `git checkout -- scripts/__pycache__` before committing.
 - Docs drift: README's long "Prompt" mentions a `rebuild_zh.py` that does not exist (the renderer
-  is `pdf_translate.py render`), and SKILL's front matter advertises a `--lang` flag that the CLI
-  does not have.
+  is `pdf_translate.py render`).
 
 ## Setup
 
@@ -50,7 +49,9 @@ python3 scripts/make_side_by_side.py paper.pdf paper-zh.pdf --out paper-dual.pdf
 
 - `extract` output is a translation manifest, never `render` input. `--compact` emits
   `{pages: {"<page1based>": [{key,size,bold,hint,text}]}, figure_labels: {"<page>": [{text,size}]},
-  suggested_layout}`; the full form adds bboxes and `figure_label_candidates`.
+  suggested_layout}`; the full form adds bboxes and `figure_label_candidates`. Blocks on
+  `references_pages`, hinted `formula`, inside `table_bands`/`fig_regions`, or listed in
+  `suggested_layout.keep_ids` are omitted from `pages`.
 - Compact filtering is only as good as `suggested_layout`: a table/figure that extract failed to
   identify stays in `pages` as ordinary body text. Check the suggested maps before translating, or
   use the full manifest.
@@ -60,10 +61,14 @@ python3 scripts/make_side_by_side.py paper.pdf paper-zh.pdf --out paper-dual.pdf
   `[y_max]` keeps blocks whose bottom is above it; the 4-value form matches block center-x and
   top-y. Suggestions come only from raster images, so vector-only figures need manual regions and
   produce no `figure_label_candidates`.
-- `references_pages` and `title_ids` copy as-is, but `references_pages` only covers the page holding
-  the `References` heading — extend it for multi-page bibliographies. `suggested_layout` never
-  includes `keep_ids`, `no_indent`, `widen`, `affil_ids`, or `references_heading_ids`; add those
-  manually.
+- `title_ids` copies as-is. `references_pages` is auto-extended: the heading page (only when the
+  `References` heading sits at the top of it, so body above it stays translatable) plus every
+  following page up to the first `Appendix` / `A. …` / `Supplementary` heading. Override it when a
+  paper interleaves body between bibliography pages.
+- `suggested_layout` also carries `keep_ids`: blocks whose exact text repeats across pages (running
+  headers/footers/watermarks, threshold `max(4, pages//3)`) plus page-number blocks; these stay
+  verbatim. It never includes `no_indent`, `widen`, `affil_ids`, or `references_heading_ids`; add
+  those manually.
 - Do not copy `table_bands` blindly. extract runs each band from below a `Table N.` caption to the
   next caption or near the page bottom, so it can swallow following headings/body; trim each band
   to the actual table. A block is inside a band when its center-y falls in it, and swallowed blocks
