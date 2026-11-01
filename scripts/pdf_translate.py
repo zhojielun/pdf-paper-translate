@@ -833,8 +833,8 @@ def cmd_extract(args):
         "suggested_layout": {"fig_regions": {}, "table_bands": {},
                              "references_pages": [], "title_ids": []},
     }
-    ref_re = re.compile(r"^\s*(\d+\.?\s*)?(References|参考文献)\s*$", re.I)
-    ref_head = None                    # (page, y-ratio) of the References heading
+    ref_re = re.compile(r"^\s*(\d+\.?\s*)?(References|参考文献)\b", re.I)
+    ref_head = None                    # (page, y-ratio, key, trailing text)
     for p in doc:
         global _PW
         _PW = p.rect.width
@@ -860,8 +860,11 @@ def cmd_extract(args):
             txt = block_text(b)
             if re.match(LAY("caption_regex"), txt) or re.match(r"^(Table|表)\s*\d", txt):
                 caps.append((b["bbox"][1], txt))
-            if ref_head is None and ref_re.match(txt):
-                ref_head = (p.number + 1, b["bbox"][1] / p.rect.height)
+            if ref_head is None:
+                rm = ref_re.match(txt)
+                if rm:
+                    ref_head = (p.number + 1, b["bbox"][1] / p.rect.height,
+                                f"p{p.number}:b{b['number']}", txt[rm.end():].strip())
 
         for b in blocks:
             txt = block_text(b)
@@ -894,14 +897,16 @@ def cmd_extract(args):
     # 参考文献页：标题在页首时含标题页，否则从下一页起；连续向后顺延，
     # 直到出现附录/新章节标题为止（参考文献几乎总是连续的一段）。
     if ref_head:
-        hp, ratio = ref_head
+        hp, ratio, hkey, trailing = ref_head
         by_page = {}
         for b in data["blocks"]:
             by_page.setdefault(b["page"], []).append(b["text"])
-        stop_re = re.compile(r"^\s*(Appendix|附录|Supplementary)\b|^[A-Z]\.\s+\S")
+        stop_re = re.compile(r"^\s*(Appendix|附录|Supplementary)\b", re.I)
+        sec_re = re.compile(r"^[A-Z]\.\s+[A-Z]")
         refs = [hp] if ratio < 0.33 else []
         for pg in range(hp + 1, len(doc) + 1):
-            if any(stop_re.match(t) for t in by_page.get(pg, [])):
+            if any(len(t) < 60 and (stop_re.match(t) or sec_re.match(t))
+                   for t in by_page.get(pg, [])):
                 break
             refs.append(pg)
         data["suggested_layout"]["references_pages"] = refs
@@ -919,6 +924,8 @@ def cmd_extract(args):
     for b in data["blocks"]:
         if b["text"].strip() == str(b["page"]):
             keep_ids.add(b["key"])
+    if ref_head and ref_head[3]:           # References 标题与首条文献粘在同一块 → 原样保留
+        keep_ids.add(ref_head[2])
     data["suggested_layout"]["keep_ids"] = sorted(keep_ids)
 
     # 标题建议：首页宽度足够、字号最大的块（排除竖排水印等窄条）
